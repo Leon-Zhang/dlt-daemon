@@ -176,6 +176,177 @@ void empty_dir(const char *dir)
         fprintf(stderr, "ERROR: Failed to stat %s with error %s\n", dir, strerror(errno));
 }
 
+char *strlwr(char *str)
+{
+    unsigned char *p = (unsigned char *)str;
+
+    while (*p) {
+        *p = tolower((unsigned char)*p);
+        p++;
+    }
+
+    return str;
+}
+
+int processDltFile(DltFile *pfile, const char *dltFn, int verbose, int ohandle,
+                   int aflag, int cflag, int sflag, int xflag, int mflag,
+                   int wflag, int vflag, char *ovalue, char *lvalue,
+                   char *bvalue, char *evalue)
+{
+    char text[DLT_CONVERT_TEXTBUFSIZE] = {0};
+    char text2[DLT_CONVERT_TEXTBUFSIZE] = {0};
+
+    struct iovec iov[2];
+    int bytes_written;
+    int num, begin, end;
+
+    /* load, analyze data file and create index list */
+    if (dlt_file_open(pfile, dltFn, verbose) >= DLT_RETURN_OK) {
+        while (dlt_file_read(pfile, verbose) >= DLT_RETURN_OK) {
+        }
+    }
+
+    if (aflag || sflag || xflag || mflag || ovalue) {
+        if (bvalue)
+            begin = atoi(bvalue);
+        else
+            begin = 0;
+
+        if (evalue && (wflag == 0))
+            end = atoi(evalue);
+        else
+            end = pfile->counter - 1;
+
+        if ((begin < 0) || (begin >= pfile->counter)) {
+            fprintf(stderr,
+                    "ERROR: Selected first message %d is out of range!\n",
+                    begin);
+            
+            return -1;
+        }
+
+        if ((end < 0) || (end >= pfile->counter) || (end < begin)) {
+            fprintf(stderr, "ERROR: Selected end message %d is out of range!\n",
+                    end);
+            return -1;
+        }
+
+        printf("=%s:\n", dltFn);
+        for (num = begin; num <= end; num++) {
+            if (dlt_file_message(pfile, num, vflag) < DLT_RETURN_OK)
+                continue;
+
+            if (xflag) {
+                printf("%d ", num);
+                if (dlt_message_print_hex(&(pfile->msg), text,
+                                          DLT_CONVERT_TEXTBUFSIZE,
+                                          vflag) < DLT_RETURN_OK)
+                    continue;
+            }
+            else if (aflag) {
+
+                if (lvalue) {
+                    if (dlt_message_payload(
+                            &pfile->msg, text2, DLT_CONVERT_TEXTBUFSIZE,
+                            DLT_OUTPUT_ASCII, vflag) < DLT_RETURN_OK)
+                        continue;
+
+                    if (!strstr(text2, lvalue)) {
+                        continue;
+                    }
+                }
+
+                printf("%d ", num);
+
+                if (dlt_message_header(&(pfile->msg), text,
+                                       DLT_CONVERT_TEXTBUFSIZE,
+                                       vflag) < DLT_RETURN_OK)
+                    continue;
+
+                printf("%s ", text);
+
+                if (*text2) {
+                    printf("[%s]\n", text2);
+                }
+                else {
+                    if (dlt_message_payload(
+                            &pfile->msg, text, DLT_CONVERT_TEXTBUFSIZE,
+                            DLT_OUTPUT_ASCII, vflag) < DLT_RETURN_OK)
+                        continue;
+
+                    printf("[%s]\n", text);
+                }
+            }
+            else if (mflag) {
+                printf("%d ", num);
+                if (dlt_message_print_mixed_plain(&(pfile->msg), text,
+                                                  DLT_CONVERT_TEXTBUFSIZE,
+                                                  vflag) < DLT_RETURN_OK)
+                    continue;
+            }
+            else if (sflag) {
+                printf("%d ", num);
+
+                if (dlt_message_header(&(pfile->msg), text,
+                                       DLT_CONVERT_TEXTBUFSIZE,
+                                       vflag) < DLT_RETURN_OK)
+                    continue;
+
+                printf("%s \n", text);
+            }
+
+            /* if file output enabled write message */
+            if (ovalue) {
+                
+                iov[0].iov_base = pfile->msg.headerbuffer;
+                iov[0].iov_len = (uint32_t)pfile->msg.headersize;
+                iov[1].iov_base = pfile->msg.databuffer;
+                iov[1].iov_len = (uint32_t)pfile->msg.datasize;
+
+                bytes_written = (int)writev(ohandle, iov, 2);
+
+                if (0 > bytes_written) {
+                    printf(
+                        "in main: writev(ohandle, iov, 2); returned an error!");
+                    close(ohandle);
+                    dlt_file_free(pfile, vflag);
+                    ovalue = 0;
+                    return -1;
+                }
+            }
+
+            /* check for new messages if follow flag set */
+            if (wflag && (num == end)) {
+                while (1) {
+                    while (dlt_file_read(pfile, 0) >= 0) {
+                    }
+
+                    if (end == (pfile->counter - 1)) {
+                        /* Sleep if no new message was received */
+                        struct timespec req;
+                        req.tv_sec = 0;
+                        req.tv_nsec = 100000000;
+                        nanosleep(&req, NULL);
+                    }
+                    else {
+                        /* set new end of log file and continue reading */
+                        end = pfile->counter - 1;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    if (cflag) {
+        printf("Total number of messages: %d\n", pfile->counter_total);
+
+        if (pfile->filter)
+            printf("Filtered number of messages: %d\n", pfile->counter);
+    }
+    return 0;
+}
+
 /**
  * Main function of tool.
  */
@@ -190,6 +361,7 @@ int main(int argc, char *argv[])
     int wflag = 0;
     int tflag = 0;
     char *fvalue = 0;
+    char *lvalue = 0;
     char *bvalue = 0;
     char *evalue = 0;
     char *ovalue = 0;
@@ -202,10 +374,6 @@ int main(int argc, char *argv[])
 
     int ohandle = -1;
 
-    int num, begin, end;
-
-    char text[DLT_CONVERT_TEXTBUFSIZE] = { 0 };
-
     /* For handling compressed files */
     char tmp_filename[FILENAME_SIZE] = { 0 };
     struct stat st;
@@ -214,13 +382,11 @@ int main(int argc, char *argv[])
     int n = 0;
     int i = 0;
 
-    struct iovec iov[2];
-    int bytes_written = 0;
     int syserr = 0;
 
     opterr = 0;
 
-    while ((c = getopt (argc, argv, "vcashxmwtf:b:e:o:")) != -1) {
+    while ((c = getopt (argc, argv, "vcashxmwtl:f:b:e:o:")) != -1) {
         switch (c)
         {
         case 'v':
@@ -271,6 +437,12 @@ int main(int argc, char *argv[])
         case 'f':
         {
             fvalue = optarg;
+            break;
+        }
+        case 'l':
+        {
+            lvalue = optarg;
+            aflag = 1;
             break;
         }
         case 'b':
@@ -389,122 +561,36 @@ int main(int argc, char *argv[])
 
             argv[index] = tmp_filename;
         }
-
-        /* load, analyze data file and create index list */
-        if (dlt_file_open(&file, argv[index], vflag) >= DLT_RETURN_OK) {
-            while (dlt_file_read(&file, vflag) >= DLT_RETURN_OK) {
+        DIR *dirp;
+        if ((dirp = opendir(argv[index])) == NULL) { //If it is file
+            if (processDltFile(&file, argv[index], vflag, ohandle, aflag, cflag,
+                               sflag, xflag, mflag, wflag, vflag, ovalue,
+                               lvalue, bvalue, evalue) != 0) {
+                return;
             }
         }
-
-        if (aflag || sflag || xflag || mflag || ovalue) {
-            if (bvalue)
-                begin = atoi(bvalue);
-            else
-                begin = 0;
-
-            if (evalue && (wflag == 0))
-                end = atoi(evalue);
-            else
-                end = file.counter - 1;
-
-            if ((begin < 0) || (begin >= file.counter)) {
-                fprintf(stderr, "ERROR: Selected first message %d is out of range!\n", begin);
-                if (ovalue)
-                    close(ohandle);
-
-                return -1;
-            }
-
-            if ((end < 0) || (end >= file.counter) || (end < begin)) {
-                fprintf(stderr, "ERROR: Selected end message %d is out of range!\n", end);
-                if (ovalue)
-                    close(ohandle);
-
-                return -1;
-            }
-
-            for (num = begin; num <= end; num++) {
-                if (dlt_file_message(&file, num, vflag) < DLT_RETURN_OK)
-                    continue;
-
-                if (xflag) {
-                    printf("%d ", num);
-                    if (dlt_message_print_hex(&(file.msg), text, DLT_CONVERT_TEXTBUFSIZE, vflag) < DLT_RETURN_OK)
-                        continue;
-                }
-                else if (aflag) {
-                    printf("%d ", num);
-
-                    if (dlt_message_header(&(file.msg), text, DLT_CONVERT_TEXTBUFSIZE, vflag) < DLT_RETURN_OK)
-                        continue;
-
-                    printf("%s ", text);
-
-                    if (dlt_message_payload(&file.msg, text, DLT_CONVERT_TEXTBUFSIZE, DLT_OUTPUT_ASCII, vflag) < DLT_RETURN_OK)
-                        continue;
-
-                    printf("[%s]\n", text);
-                }
-                else if (mflag) {
-                    printf("%d ", num);
-                    if (dlt_message_print_mixed_plain(&(file.msg), text, DLT_CONVERT_TEXTBUFSIZE, vflag) < DLT_RETURN_OK)
-                        continue;
-                }
-                else if (sflag) {
-                    printf("%d ", num);
-
-                    if (dlt_message_header(&(file.msg), text, DLT_CONVERT_TEXTBUFSIZE, vflag) < DLT_RETURN_OK)
-                        continue;
-
-                    printf("%s \n", text);
-                }
-
-                /* if file output enabled write message */
-                if (ovalue) {
-                    iov[0].iov_base = file.msg.headerbuffer;
-                    iov[0].iov_len = (uint32_t) file.msg.headersize;
-                    iov[1].iov_base = file.msg.databuffer;
-                    iov[1].iov_len = (uint32_t) file.msg.datasize;
-
-                    bytes_written =(int) writev(ohandle, iov, 2);
-
-                    if (0 > bytes_written) {
-                        printf("in main: writev(ohandle, iov, 2); returned an error!");
-                        close(ohandle);
-                        dlt_file_free(&file, vflag);
-                        return -1;
-                    }
-                }
-
-                /* check for new messages if follow flag set */
-                if (wflag && (num == end)) {
-                    while (1) {
-                        while (dlt_file_read(&file, 0) >= 0){
-                        }
-
-                        if (end == (file.counter - 1)) {
-                            /* Sleep if no new message was received */
-                            struct timespec req;
-                            req.tv_sec = 0;
-                            req.tv_nsec = 100000000;
-                            nanosleep(&req, NULL);
-                        }
-                        else {
-                            /* set new end of log file and continue reading */
-                            end = file.counter - 1;
-                            break;
-                        }
+        else {
+            struct dirent *direntp;
+            static const char *DLT_EXT = ".dlt";
+            char fname[257];
+            while ((direntp = readdir(dirp)) != NULL) {
+                strcpy(fname, direntp->d_name);
+                strlwr(fname);
+                const char *p = strstr(fname, DLT_EXT);
+                if (p && strlen(p) == 4) {
+                    strcpy(fname, argv[index]);
+                    strcat(fname, "/");
+                    strcat(fname, direntp->d_name);
+                    if (processDltFile(&file, fname, vflag, ohandle, aflag,
+                                       cflag, sflag, xflag, mflag, wflag, vflag,
+                                       ovalue, lvalue, bvalue, evalue) != 0) {
+                        return;
                     }
                 }
             }
         }
 
-        if (cflag) {
-            printf("Total number of messages: %d\n", file.counter_total);
-
-            if (file.filter)
-                printf("Filtered number of messages: %d\n", file.counter);
-        }
+        
     }
 
     if (ovalue)

@@ -5,6 +5,11 @@
 [![CodeQL](https://github.com/COVESA/dlt-daemon/actions/workflows/codeql-analysis.yml/badge.svg?branch=master)](https://github.com/COVESA/dlt-daemon/actions/workflows/codeql-analysis.yml)
 [![Page-build-deployment](https://github.com/COVESA/dlt-daemon/actions/workflows/pages/pages-build-deployment/badge.svg)](https://github.com/COVESA/dlt-daemon/actions/workflows/pages/pages-build-deployment)
 
+# Fast search dlt files
+find "DcController" text in dlt files under /mnt/d/dlts folder example command line:
+
+./dlt-convert -l DcController /mnt/d/dlts
+
 **Code coverage reports online** 📄 [LCOV - code coverage report](https://COVESA.github.io/dlt-daemon/dlt_lcov_report/index.html)
 
 # Diagnostic Log and Trace
