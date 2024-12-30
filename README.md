@@ -5,8 +5,8 @@
 [![CodeQL](https://github.com/COVESA/dlt-daemon/actions/workflows/codeql-analysis.yml/badge.svg?branch=master)](https://github.com/COVESA/dlt-daemon/actions/workflows/codeql-analysis.yml)
 [![Page-build-deployment](https://github.com/COVESA/dlt-daemon/actions/workflows/pages/pages-build-deployment/badge.svg)](https://github.com/COVESA/dlt-daemon/actions/workflows/pages/pages-build-deployment)
 
-# Fast search dlt files
-find "DcController" text in dlt files under /mnt/d/dlts folder example command line:
+# Fast search(batch) dlt files
+find "DcController" text in dlt files under /mnt/d/dlts folder, example command line as following:
 
 ./dlt-convert -l DcController /mnt/d/dlts
 
